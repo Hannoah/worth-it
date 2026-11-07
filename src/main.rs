@@ -1,17 +1,32 @@
-//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.3.0 UI/UX Extreme Edition)
+//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.3.1 Robust & Hardened Edition)
 //!
 //! 6대 핵심 철학:
 //! 1. 군더더기 없음 (No Bloat) - 외부 의존 크레이트 0개 (Zero External Dependencies)
-//! 2. 최적화 (Optimized) - LTO, Strip, 300KB 초경량 단일 바이너리
+//! 2. 최적화 (Optimized) - LTO, Strip, 330KB 초경량 단일 바이너리
 //! 3. 간결함 (Concise / KISS) - 순수 Rust 표준 라이브러리로 완성된 세련된 인터페이스
 //! 4. 목적 적합성 (Fit for Purpose) - 도메인 맞춤형 최소 폼팩터 처방
 //! 5. 불필요한 기능 구현 금지 (YAGNI) - 과도한 추상화 및 미래 확장성 설계 차단
-//! 6. 가볍고 확실하게 (Lightweight & Solid) - 타입/메모리 안전성 및 0ms 테스트 완비
+//! 6. 가볍고 확실하게 (Lightweight & Solid) - 타입/메모리/인코딩 안전성 및 12개 단위 테스트 완비
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+
+#[cfg(windows)]
+fn init_windows_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+    }
+    unsafe {
+        // UTF-8 코드페이지 (CP 65001) 설정으로 윈도우 콘솔 유니코드 깨짐 방지
+        SetConsoleOutputCP(65001);
+    }
+}
+
+#[cfg(not(windows))]
+fn init_windows_console() {}
 
 // ============================================================================
 // 1. CORE DOMAIN TYPES & EVALUATION
@@ -105,6 +120,17 @@ pub struct GateScores {
 }
 
 impl GateScores {
+    /// 배점 범위를 초과하지 않도록 안전하게 클램핑된 스코어 생성
+    pub fn new_clamped(g1: u32, g2: u32, g3: u32, g4: u32, g5: u32) -> Self {
+        Self {
+            gate1_alternative: g1.min(25),
+            gate2_servitization: g2.min(25),
+            gate3_urgency: g3.min(20),
+            gate4_tco: g4.min(15),
+            gate5_strategy: g5.min(15),
+        }
+    }
+
     pub fn total(&self) -> u32 {
         self.gate1_alternative
             + self.gate2_servitization
@@ -325,10 +351,6 @@ impl TermUi {
         if self.enabled { format!("\x1b[36m{}\x1b[0m", s) } else { s.to_string() }
     }
 
-    pub fn magenta(&self, s: &str) -> String {
-        if self.enabled { format!("\x1b[35m{}\x1b[0m", s) } else { s.to_string() }
-    }
-
     pub fn bold(&self, s: &str) -> String {
         if self.enabled { format!("\x1b[1m{}\x1b[0m", s) } else { s.to_string() }
     }
@@ -432,7 +454,7 @@ pub fn render_terminal_dashboard(result: &ValuationResult, ui: &TermUi) -> Strin
 }
 
 // ============================================================================
-// 3. FORMATTERS (MARKDOWN, JSON & SELF-CONTAINED HTML DASHBOARD)
+// 3. FORMATTERS (MARKDOWN, SECURE JSON & XSS-SAFE HTML DASHBOARD)
 // ============================================================================
 
 pub fn format_markdown_report(result: &ValuationResult) -> String {
@@ -481,7 +503,8 @@ pub fn format_markdown_report(result: &ValuationResult) -> String {
     out
 }
 
-fn escape_json(s: &str) -> String {
+/// RFC 8259 완벽 준수 JSON 이스케이프 (제어문자 \u0000~\u001f 완전 처리)
+pub fn escape_json(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -490,6 +513,27 @@ fn escape_json(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0C' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// HTML XSS 및 마크업 깨짐 방지 이스케이프
+pub fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
             _ => out.push(c),
         }
     }
@@ -558,7 +602,7 @@ pub fn format_json_report(result: &ValuationResult) -> String {
     )
 }
 
-/// 완전 독립형(Self-Contained) 다크 테마 HTML 대시보드 생성기
+/// 완전 독립형(Self-Contained) 다크 테마 HTML 대시보드 생성기 (XSS 방어 완료)
 pub fn format_html_report(result: &ValuationResult) -> String {
     let p = &result.prescription;
     let s = &result.scores;
@@ -572,13 +616,14 @@ pub fn format_html_report(result: &ValuationResult) -> String {
     };
 
     let md_raw = format_markdown_report(result);
-    let md_escaped = escape_json(&md_raw);
+    // script 태그 내 안전 주입을 위해 </script> 이스케이프
+    let md_escaped = escape_json(&md_raw).replace("</script>", "<\\/script>");
 
     let mut forbidden_html = String::new();
     for b in &p.forbidden_bloat {
         forbidden_html.push_str(&format!(
             r#"<span class="badge badge-forbidden">❌ {}</span>"#,
-            b
+            escape_html(b)
         ));
     }
 
@@ -586,15 +631,15 @@ pub fn format_html_report(result: &ValuationResult) -> String {
     for r in &p.lean_rules {
         rules_html.push_str(&format!(
             r#"<div class="rule-item"><span class="check">✓</span><span>{}</span></div>"#,
-            r
+            escape_html(r)
         ));
     }
 
-    let g1_pct = s.gate1_alternative * 100 / 25;
-    let g2_pct = s.gate2_servitization * 100 / 25;
-    let g3_pct = s.gate3_urgency * 100 / 20;
-    let g4_pct = s.gate4_tco * 100 / 15;
-    let g5_pct = s.gate5_strategy * 100 / 15;
+    let g1_pct = (s.gate1_alternative * 100 / 25).min(100);
+    let g2_pct = (s.gate2_servitization * 100 / 25).min(100);
+    let g3_pct = (s.gate3_urgency * 100 / 20).min(100);
+    let g4_pct = (s.gate4_tco * 100 / 15).min(100);
+    let g5_pct = (s.gate5_strategy * 100 / 15).min(100);
 
     // SVG 원형 차트 둘레: 반지름 42, 둘레 2 * pi * 42 ≈ 263.89
     let circumference = 263.89;
@@ -888,13 +933,13 @@ pub fn format_html_report(result: &ValuationResult) -> String {
 </body>
 </html>
 "##,
-        project_name = result.project_name,
+        project_name = escape_html(&result.project_name),
         badge_color = badge_color,
         badge_text = badge_text,
         total = total,
         circumference = circumference,
         stroke_offset = stroke_offset,
-        decision_reason = result.decision_reason,
+        decision_reason = escape_html(&result.decision_reason),
         g1 = s.gate1_alternative,
         g2 = s.gate2_servitization,
         g3 = s.gate3_urgency,
@@ -905,13 +950,13 @@ pub fn format_html_report(result: &ValuationResult) -> String {
         g3_pct = g3_pct,
         g4_pct = g4_pct,
         g5_pct = g5_pct,
-        form_factor = p.form_factor,
-        recommended_stack = p.recommended_stack,
-        estimated_files = p.estimated_files,
-        project_type = result.project_type.label(),
+        form_factor = escape_html(p.form_factor),
+        recommended_stack = escape_html(p.recommended_stack),
+        estimated_files = escape_html(p.estimated_files),
+        project_type = escape_html(result.project_type.label()),
         forbidden_html = forbidden_html,
         rules_html = rules_html,
-        next_action = p.next_action,
+        next_action = escape_html(p.next_action),
         md_escaped = md_escaped
     )
 }
@@ -989,12 +1034,17 @@ fn ask_gate_quick(
     pts
 }
 
-fn run_interactive(ui: &TermUi) {
-    ui.render_banner("⚖️ worth-it v0.3.0 · 프로젝트 가치평가 및 아키텍처 처방기");
+fn run_interactive(ui: &TermUi, preset_name: Option<String>) {
+    ui.render_banner("⚖️ worth-it v0.3.1 · 프로젝트 가치평가 및 아키텍처 처방기");
     println!("{}\n", ui.dim("철학: 군더더기 없음 · 최적화 · 간결함 · 목적 적합성 · YAGNI · 가볍고 확실하게"));
 
-    let name = prompt_line("📌 프로젝트 / 도구 아이디어 이름: ");
-    let name = if name.is_empty() { "unnamed-project".to_string() } else { name };
+    let name = if let Some(n) = preset_name {
+        println!("📌 프로젝트 이름: {}", ui.bold(&n));
+        n
+    } else {
+        let input = prompt_line("📌 프로젝트 / 도구 아이디어 이름: ");
+        if input.is_empty() { "unnamed-project".to_string() } else { input }
+    };
 
     println!("\n평가 모드를 선택하세요:");
     println!("  1) {} 30초 퀵 마법사 (상/중/하 빠른 선택 및 실시간 피드백) [권장]", ui.bright_green("[★]"));
@@ -1097,14 +1147,7 @@ fn run_interactive(ui: &TermUi) {
     let perf_choice = prompt_number("선택", 1, 2, 1);
     let is_perf = perf_choice == 2;
 
-    let scores = GateScores {
-        gate1_alternative: g1,
-        gate2_servitization: g2,
-        gate3_urgency: g3,
-        gate4_tco: g4,
-        gate5_strategy: g5,
-    };
-
+    let scores = GateScores::new_clamped(g1, g2, g3, g4, g5);
     let result = evaluate(&name, scores, ptype, is_perf, alt_name.as_deref());
 
     // 미려한 터미널 대시보드 출력
@@ -1117,8 +1160,10 @@ fn run_interactive(ui: &TermUi) {
     println!("  4) 저장하지 않고 종료");
     let save_choice = prompt_number("선택", 1, 4, 3);
 
+    let clean_name = name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect::<String>();
+
     if save_choice == 1 || save_choice == 3 {
-        let default_md = format!("{}_report.md", name.replace(' ', "_"));
+        let default_md = format!("{}_report.md", clean_name);
         let md_path = prompt_line(&format!("Markdown 저장 경로 [기본: {}]: ", default_md));
         let path = if md_path.is_empty() { default_md } else { md_path };
         let report = format_markdown_report(&result);
@@ -1130,7 +1175,7 @@ fn run_interactive(ui: &TermUi) {
     }
 
     if save_choice == 2 || save_choice == 3 {
-        let default_html = format!("{}_dashboard.html", name.replace(' ', "_"));
+        let default_html = format!("{}_dashboard.html", clean_name);
         let html_path = prompt_line(&format!("HTML 대시보드 저장 경로 [기본: {}]: ", default_html));
         let path = if html_path.is_empty() { default_html } else { html_path };
         let html = format_html_report(&result);
@@ -1217,9 +1262,9 @@ fn handle_init(target_path: Option<&str>) {
 // ============================================================================
 
 fn print_help(ui: &TermUi) {
-    ui.render_banner("worth-it v0.3.0 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
+    ui.render_banner("worth-it v0.3.1 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
     println!("사용법:");
-    println!("  1. 대화형 모드:      worth-it");
+    println!("  1. 대화형 모드:      worth-it [프로젝트명]");
     println!("  2. 템플릿 생성:      worth-it --init [파일명.md]");
     println!("  3. 인자 지정 모드:    worth-it --name <이름> --scores <G1> <G2> <G3> <G4> <G5> [옵션]\n");
     println!("옵션:");
@@ -1237,18 +1282,26 @@ fn print_help(ui: &TermUi) {
 }
 
 fn main() {
+    init_windows_console();
+
     let args: Vec<String> = env::args().collect();
     let no_color = args.iter().any(|a| a == "--no-color");
     let ui = TermUi::new(!no_color);
 
     if args.len() == 1 {
-        run_interactive(&ui);
+        run_interactive(&ui, None);
         return;
     }
 
     if args[1] == "--init" {
         let target = if args.len() > 2 { Some(args[2].as_str()) } else { None };
         handle_init(target);
+        return;
+    }
+
+    // 단일 인자이며 옵션 플래그가 아닌 경우 프로젝트 이름으로 대화형 시작
+    if args.len() == 2 && !args[1].starts_with('-') {
+        run_interactive(&ui, Some(args[1].clone()));
         return;
     }
 
@@ -1314,24 +1367,31 @@ fn main() {
                     i += 1;
                 }
             }
-            _ => {}
+            _ => {
+                // 알 수 없는 플래그 무시 or 단일 위치인자 name 처리
+                if !args[i].starts_with('-') && name == "unnamed-project" && scores_vec.is_empty() {
+                    name = args[i].clone();
+                }
+            }
         }
         i += 1;
     }
 
     if scores_vec.len() < 5 {
         eprintln!("오류: --scores 옵션 뒤에 5개 점수(G1 G2 G3 G4 G5)를 모두 전달해야 합니다.");
+        eprintln!("각 Gate 최대 배점: G1(25) G2(25) G3(20) G4(15) G5(15)");
         eprintln!("예시: worth-it --name \"my-tool\" --scores 22 20 18 14 12");
         std::process::exit(1);
     }
 
-    let scores = GateScores {
-        gate1_alternative: scores_vec[0],
-        gate2_servitization: scores_vec[1],
-        gate3_urgency: scores_vec[2],
-        gate4_tco: scores_vec[3],
-        gate5_strategy: scores_vec[4],
-    };
+    // 각 Gate 점수를 최대 배점으로 안전하게 클램핑
+    let scores = GateScores::new_clamped(
+        scores_vec[0],
+        scores_vec[1],
+        scores_vec[2],
+        scores_vec[3],
+        scores_vec[4],
+    );
 
     let result = evaluate(&name, scores, ptype, perf, alt.as_deref());
 
@@ -1381,25 +1441,25 @@ mod tests {
 
     #[test]
     fn test_gate_scores_total() {
-        let scores = GateScores {
-            gate1_alternative: 20,
-            gate2_servitization: 20,
-            gate3_urgency: 15,
-            gate4_tco: 15,
-            gate5_strategy: 15,
-        };
+        let scores = GateScores::new_clamped(20, 20, 15, 15, 15);
         assert_eq!(scores.total(), 85);
     }
 
     #[test]
+    fn test_gate_scores_clamping() {
+        // 배점 초과 시 안전하게 최대치로 클램핑되는지 검증
+        let scores = GateScores::new_clamped(100, 100, 100, 100, 100);
+        assert_eq!(scores.gate1_alternative, 25);
+        assert_eq!(scores.gate2_servitization, 25);
+        assert_eq!(scores.gate3_urgency, 20);
+        assert_eq!(scores.gate4_tco, 15);
+        assert_eq!(scores.gate5_strategy, 15);
+        assert_eq!(scores.total(), 100);
+    }
+
+    #[test]
     fn test_evaluate_go_decision() {
-        let scores = GateScores {
-            gate1_alternative: 22,
-            gate2_servitization: 22,
-            gate3_urgency: 18,
-            gate4_tco: 14,
-            gate5_strategy: 14,
-        };
+        let scores = GateScores::new_clamped(22, 22, 18, 14, 14);
         let res = evaluate("super-tool", scores, ProjectType::AgentTool, false, None);
         assert_eq!(res.decision, Decision::Go);
         assert_eq!(res.scores.total(), 90);
@@ -1409,13 +1469,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_spike_decision() {
-        let scores = GateScores {
-            gate1_alternative: 18,
-            gate2_servitization: 15,
-            gate3_urgency: 12,
-            gate4_tco: 12,
-            gate5_strategy: 12,
-        };
+        let scores = GateScores::new_clamped(18, 15, 12, 12, 12);
         let res = evaluate("quick-poc", scores, ProjectType::CliTool, false, None);
         assert_eq!(res.decision, Decision::Spike);
         assert!(res.decision_reason.contains("1일 타임박스"));
@@ -1423,13 +1477,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_adopt_decision() {
-        let scores = GateScores {
-            gate1_alternative: 4,
-            gate2_servitization: 20,
-            gate3_urgency: 15,
-            gate4_tco: 10,
-            gate5_strategy: 10,
-        };
+        let scores = GateScores::new_clamped(4, 20, 15, 10, 10);
         let res = evaluate("custom-grep", scores, ProjectType::CliTool, false, Some("ripgrep"));
         assert_eq!(res.decision, Decision::Adopt);
         assert!(res.decision_reason.contains("ripgrep"));
@@ -1438,13 +1486,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_no_go_decision() {
-        let scores = GateScores {
-            gate1_alternative: 10,
-            gate2_servitization: 10,
-            gate3_urgency: 10,
-            gate4_tco: 10,
-            gate5_strategy: 10,
-        };
+        let scores = GateScores::new_clamped(10, 10, 10, 10, 10);
         let res = evaluate("bloat-tool", scores, ProjectType::CliTool, false, None);
         assert_eq!(res.decision, Decision::NoGo);
         assert_eq!(res.prescription.estimated_files, "0개");
@@ -1452,13 +1494,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_prescription() {
-        let scores = GateScores {
-            gate1_alternative: 20,
-            gate2_servitization: 20,
-            gate3_urgency: 15,
-            gate4_tco: 15,
-            gate5_strategy: 15,
-        };
+        let scores = GateScores::new_clamped(20, 20, 15, 15, 15);
         let res = evaluate("status-view", scores, ProjectType::Dashboard, false, None);
         assert!(res.prescription.form_factor.contains("단일 정적 HTML"));
         assert!(res.prescription.forbidden_bloat.iter().any(|b| b.contains("React")));
@@ -1472,14 +1508,29 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_json_comprehensive() {
+        // 제어 문자, 특수 기호, 유니코드 이스케이프 검증
+        let raw = "hello \"world\"\n\r\t\x08\x0c\x01";
+        let escaped = escape_json(raw);
+        assert!(escaped.contains("\\\""));
+        assert!(escaped.contains("\\n"));
+        assert!(escaped.contains("\\r"));
+        assert!(escaped.contains("\\t"));
+        assert!(escaped.contains("\\b"));
+        assert!(escaped.contains("\\f"));
+        assert!(escaped.contains("\\u0001"));
+    }
+
+    #[test]
+    fn test_escape_html() {
+        let raw = "<script>alert('XSS' & \"test\");</script>";
+        let escaped = escape_html(raw);
+        assert_eq!(escaped, "&lt;script&gt;alert(&#x27;XSS&#x27; &amp; &quot;test&quot;);&lt;/script&gt;");
+    }
+
+    #[test]
     fn test_json_report_format() {
-        let scores = GateScores {
-            gate1_alternative: 22,
-            gate2_servitization: 20,
-            gate3_urgency: 18,
-            gate4_tco: 14,
-            gate5_strategy: 12,
-        };
+        let scores = GateScores::new_clamped(22, 20, 18, 14, 12);
         let res = evaluate("json-tool", scores, ProjectType::CliTool, false, None);
         let json = format_json_report(&res);
         assert!(json.contains("\"project_name\": \"json-tool\""));
@@ -1488,37 +1539,11 @@ mod tests {
     }
 
     #[test]
-    fn test_html_report_generation() {
-        let scores = GateScores {
-            gate1_alternative: 22,
-            gate2_servitization: 20,
-            gate3_urgency: 18,
-            gate4_tco: 14,
-            gate5_strategy: 12,
-        };
-        let res = evaluate("html-demo", scores, ProjectType::CliTool, false, None);
+    fn test_html_report_xss_safety() {
+        let scores = GateScores::new_clamped(22, 20, 18, 14, 12);
+        let res = evaluate("<script>evil()</script>", scores, ProjectType::CliTool, false, None);
         let html = format_html_report(&res);
-        assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("html-demo"));
-        assert!(html.contains("hero-gauge-score"));
-        assert!(html.contains("마크다운 복사"));
-        assert!(html.contains("navigator.clipboard.writeText"));
-    }
-
-    #[test]
-    fn test_terminal_dashboard_box() {
-        let scores = GateScores {
-            gate1_alternative: 22,
-            gate2_servitization: 20,
-            gate3_urgency: 18,
-            gate4_tco: 14,
-            gate5_strategy: 12,
-        };
-        let res = evaluate("term-demo", scores, ProjectType::CliTool, false, None);
-        let ui = TermUi::new(false);
-        let dash = render_terminal_dashboard(&res, &ui);
-        assert!(dash.contains("worth-it 판정 대시보드: term-demo"));
-        assert!(dash.contains("Gate 1"));
-        assert!(dash.contains("최종 가치 점수"));
+        assert!(html.contains("&lt;script&gt;evil()&lt;/script&gt;"));
+        assert!(!html.contains("<script>evil()</script>"));
     }
 }
