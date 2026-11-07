@@ -1,0 +1,45 @@
+name: release-binaries
+
+# 릴리즈가 publish되면 Linux/macOS 바이너리를 빌드해 그 릴리즈에 첨부한다.
+# 이미 있는 릴리즈에는 수동 실행: gh workflow run release-binaries.yml -f tag=v0.4.0
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "바이너리를 첨부할 릴리즈 태그 (예: v0.4.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: musl 툴체인 (Linux 정적 링크)
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo test --release --target ${{ matrix.target }}
+        if: matrix.target != 'x86_64-apple-darwin' # arm 러너에서 x86_64 테스트 바이너리는 실행 불가
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: 패키징 및 업로드
+        run: |
+          asset="worth-it-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" worth-it
+          gh release upload "$TAG" "$asset" --clobber

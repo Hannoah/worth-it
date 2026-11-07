@@ -44,6 +44,18 @@
 .\worth-it.exe
 ```
 
+Linux / macOS는 같은 페이지의 `worth-it-<태그>-<타깃>.tar.gz`를 받아 풀면 됩니다.
+
+| OS | 타깃 |
+|---|---|
+| Linux x86_64 (musl 정적 링크, 어느 배포판에서나 실행) | `x86_64-unknown-linux-musl` |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| macOS Intel | `x86_64-apple-darwin` |
+
+```bash
+tar -xzf worth-it-v0.4.0-aarch64-apple-darwin.tar.gz && ./worth-it
+```
+
 ### 방법 1. 소스 클론 및 빌드
 
 ```powershell
