@@ -40,7 +40,7 @@
 빌드 없이 바로 씁니다. [Releases](https://github.com/Hannoah/worth-it/releases) 페이지에서 `worth-it.exe`를 받아 실행하세요.
 
 ```powershell
-# 예: v0.4.0 다운로드 후 실행
+# 예: v0.4.1 다운로드 후 실행
 .\worth-it.exe
 ```
 
@@ -53,7 +53,7 @@ Linux / macOS는 같은 페이지의 `worth-it-<태그>-<타깃>.tar.gz`를 받�
 | macOS Intel | `x86_64-apple-darwin` |
 
 ```bash
-tar -xzf worth-it-v0.4.0-aarch64-apple-darwin.tar.gz && ./worth-it
+tar -xzf worth-it-v0.4.1-aarch64-apple-darwin.tar.gz && ./worth-it
 ```
 
 ### 방법 1. 소스 클론 및 빌드

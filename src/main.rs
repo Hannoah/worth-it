@@ -1,4 +1,4 @@
-//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.4.0 Robust & Hardened Edition)
+//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.4.1 Robust & Hardened Edition)
 //!
 //! 6대 핵심 철학:
 //! 1. 군더더기 없음 (No Bloat) - 외부 의존 크레이트 0개 (Zero External Dependencies)
@@ -1149,7 +1149,7 @@ fn ask_gate_quick(ui: &TermUi, q: QuickGate) -> u32 {
 }
 
 fn run_interactive(ui: &TermUi, preset_name: Option<String>) {
-    ui.render_banner("⚖️ worth-it v0.4.0 · 프로젝트 가치평가 및 아키텍처 처방기");
+    ui.render_banner("⚖️ worth-it v0.4.1 · 프로젝트 가치평가 및 아키텍처 처방기");
     println!("{}\n", ui.dim("철학: 군더더기 없음 · 최적화 · 간결함 · 목적 적합성 · YAGNI · 가볍고 확실하게"));
 
     let name = if let Some(n) = preset_name {
@@ -1361,7 +1361,7 @@ fn handle_init(target_path: Option<&str>, force: bool) {
 // ============================================================================
 
 fn print_help(ui: &TermUi) {
-    ui.render_banner("worth-it v0.4.0 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
+    ui.render_banner("worth-it v0.4.1 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
     println!("사용법:");
     println!("  1. 대화형 모드:      worth-it [프로젝트명]");
     println!("  2. 템플릿 생성:      worth-it --init [파일명.md] [--force]");
