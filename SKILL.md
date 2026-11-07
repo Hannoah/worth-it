@@ -1,6 +1,6 @@
 ---
 name: worth-it
-description: 프로젝트 및 도구 기획 단계에서 바퀴 재발명 방지(대안 검증)와 서비스화 실질 ROI를 평가하고, 군더더기 없는 초경량 목적 적합 아키텍처를 처방하는 가치평가 스킬 (Rust Core v0.3.0 UI/UX Extreme Edition)
+description: 프로젝트 및 도구 기획 단계에서 바퀴 재발명 방지(대안 검증)와 서비스화 실질 ROI를 평가하고, 군더더기 없는 초경량 목적 적합 아키텍처를 처방하는 가치평가 스킬 (Rust Core v0.3.1 Robust & Hardened Edition)
 version: 1.0.0
 author: kornah
 tags: [rust, architecture, evaluation, lean, project-management, automation, dashboard]

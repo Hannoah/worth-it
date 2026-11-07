@@ -2,11 +2,11 @@
 //!
 //! 6대 핵심 철학:
 //! 1. 군더더기 없음 (No Bloat) - 외부 의존 크레이트 0개 (Zero External Dependencies)
-//! 2. 최적화 (Optimized) - LTO, Strip, 330KB 초경량 단일 바이너리
+//! 2. 최적화 (Optimized) - LTO, Strip, 334KB 초경량 단일 바이너리
 //! 3. 간결함 (Concise / KISS) - 순수 Rust 표준 라이브러리로 완성된 세련된 인터페이스
 //! 4. 목적 적합성 (Fit for Purpose) - 도메인 맞춤형 최소 폼팩터 처방
 //! 5. 불필요한 기능 구현 금지 (YAGNI) - 과도한 추상화 및 미래 확장성 설계 차단
-//! 6. 가볍고 확실하게 (Lightweight & Solid) - 타입/메모리/인코딩 안전성 및 12개 단위 테스트 완비
+//! 6. 가볍고 확실하게 (Lightweight & Solid) - 타입/메모리/인코딩 안전성 및 19개 단위 테스트 완비
 
 use std::env;
 use std::fs;
@@ -78,14 +78,27 @@ pub enum ProjectType {
     Script,
 }
 
+/// GO 판정을 유지하기 위한 게이트별 최소 점수 (각 배점의 40%).
+/// 총점이 높아도 특정 게이트가 바닥이면 성급한 본개발을 막기 위한 하한선이다.
+fn meets_gate_minimums(s: &GateScores) -> bool {
+    s.gate1_alternative >= 10
+        && s.gate2_servitization >= 10
+        && s.gate3_urgency >= 8
+        && s.gate4_tco >= 6
+        && s.gate5_strategy >= 6
+}
+
 impl ProjectType {
-    pub fn parse(s: &str) -> Self {
+    /// 알 수 없는 유형 문자열은 `None`을 반환한다. 조용히 기본값으로
+    /// 대체하지 않는다 (오타 묵인 방지).
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "agent_tool" | "agent" | "mcp" => ProjectType::AgentTool,
-            "dashboard" | "html" | "ui" => ProjectType::Dashboard,
-            "high_perf_cli" | "perf" | "rust" => ProjectType::HighPerfCli,
-            "script" => ProjectType::Script,
-            _ => ProjectType::CliTool,
+            "cli_tool" | "cli" => Some(ProjectType::CliTool),
+            "agent_tool" | "agent" | "mcp" => Some(ProjectType::AgentTool),
+            "dashboard" | "html" | "ui" => Some(ProjectType::Dashboard),
+            "high_perf_cli" | "perf" => Some(ProjectType::HighPerfCli),
+            "script" => Some(ProjectType::Script),
+            _ => None,
         }
     }
 
@@ -170,18 +183,38 @@ pub fn evaluate(
     let total = scores.total();
 
     // 1. 의사결정 로직
-    let (decision, reason) = if scores.gate1_alternative <= 5 && existing_alternative.is_some() {
-        let alt = existing_alternative.unwrap();
-        (
-            Decision::Adopt,
-            format!("더 우수한 기존 대안({alt})이 이미 존재합니다. 직접 개발하지 말고 채택하세요."),
-        )
+    // Gate 1이 바닥이면 대안 이름을 받았는지와 무관하게 ADOPT이다.
+    // 대안 이름 없이 총점제로 GO가 나오는 우회를 차단한다.
+    let (decision, reason) = if scores.gate1_alternative <= 5 {
+        match existing_alternative {
+            Some(alt) => (
+                Decision::Adopt,
+                format!("더 우수한 기존 대안({alt})이 이미 존재합니다. 직접 개발하지 말고 채택하세요."),
+            ),
+            None => (
+                Decision::Adopt,
+                "바퀴 재발명 검증 점수가 최저 수준입니다. 직접 개발하지 말고 기존 대안을 먼저 찾아 채택하세요.".to_string(),
+            ),
+        }
     } else if total >= 80 {
         (Decision::Go, Decision::Go.summary_ko().to_string())
     } else if total >= 60 {
         (Decision::Spike, Decision::Spike.summary_ko().to_string())
     } else {
         (Decision::NoGo, Decision::NoGo.summary_ko().to_string())
+    };
+
+    // 총점이 GO 구간이어도 특정 게이트가 하한선 미만이면 SPIKE로 격하시킨다.
+    let (decision, reason) = if decision == Decision::Go && !meets_gate_minimums(&scores) {
+        (
+            Decision::Spike,
+            format!(
+                "총점은 GO 구간이나 일부 Gate가 최소 기준에 미달합니다. 약한 부분을 먼저 검증하세요. {}",
+                Decision::Spike.summary_ko()
+            ),
+        )
+    } else {
+        (decision, reason)
     };
 
     // 2. 초경량 아키텍처 처방 (6대 원칙 기반)
@@ -321,6 +354,60 @@ pub fn render_gauge_modern(val: u32, max: u32, width: usize) -> String {
     format!("{}{}", "▰".repeat(filled), "▱".repeat(empty))
 }
 
+/// ANSI 이스케이프를 제외한 화면 표시 폭. 한글·이모지는 2칸, 결합용
+/// 문자(변이 선택자·ZWJ)는 0칸으로 센다. `{:>N}` 포맷은 바이트 기준이라
+/// 색상 모드에서 표가 어긋나므로 폭 계산이 필요한 곳은 이 함수를 쓴다.
+pub fn visible_width(s: &str) -> usize {
+    let mut w = 0;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for e in chars.by_ref() {
+                if e == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        w += if is_zero_width_char(c) {
+            0
+        } else if is_wide_char(c) {
+            2
+        } else {
+            1
+        };
+    }
+    w
+}
+
+fn is_zero_width_char(c: char) -> bool {
+    matches!(c, '\u{200D}' | '\u{FE00}'..='\u{FE0F}' | '\u{1F3FB}'..='\u{1F3FF}')
+}
+
+fn is_wide_char(c: char) -> bool {
+    matches!(c,
+        '\u{1100}'..='\u{115F}'
+        | '\u{2E80}'..='\u{A4CF}'
+        | '\u{AC00}'..='\u{D7A3}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{FE30}'..='\u{FE4F}'
+        | '\u{FF00}'..='\u{FFEF}'
+        | '\u{2600}'..='\u{26FF}'
+        | '\u{2700}'..='\u{27BF}'
+        | '\u{2B00}'..='\u{2BFF}'
+        | '\u{1F300}'..='\u{1FAFF}')
+}
+
+/// 표시 폭 기준 우측 공백 패딩. 이미 넘치면 자르지 않고 그대로 둔다.
+pub fn pad_to(s: &str, width: usize) -> String {
+    let v = visible_width(s);
+    if v >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - v))
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct TermUi {
     pub enabled: bool,
@@ -382,7 +469,7 @@ impl TermUi {
         let width = 64;
         let line = "─".repeat(width);
         println!("{}", self.cyan(&format!("╭{}╮", line)));
-        println!("│ {:<62} │", self.bold(title));
+        println!("│ {} │", pad_to(&self.bold(title), width - 2));
         println!("{}", self.cyan(&format!("╰{}╯", line)));
     }
 }
@@ -396,20 +483,27 @@ pub fn render_terminal_dashboard(result: &ValuationResult, ui: &TermUi) -> Strin
 
     let mut out = String::new();
     let border = ui.cyan(&"─".repeat(66));
+    // 행 내부는 표시 폭 기준으로 패딩한다. ANSI 코드와 한글 전각폭이
+    // `{:>N}` 바이트 폭 계산을 어긋나게 하므로 pad_to로 감싼다.
+    let line = |inner: &str| format!("│ {} │\n", pad_to(inner, 62));
 
     out.push_str(&format!("╭{}╮\n", border));
-    out.push_str(&format!("│  ⚖️  {:<58} │\n", ui.bold(&format!("worth-it 판정 대시보드: {}", result.project_name))));
+    out.push_str(&line(&format!("⚖️  {}", ui.bold(&format!("worth-it 판정 대시보드: {}", result.project_name)))));
     out.push_str(&format!("├{}┤\n", border));
-    out.push_str(&format!("│  🎯 {:<12} : {:<47} │\n", ui.bold("최종 판정"), ui.decision_styled(result.decision)));
-    out.push_str(&format!("│  📊 {:<12} : {} / 100점  {:<24} │\n", ui.bold("가치 점수"), ui.score_styled(total), ui.green(&gauge)));
-    out.push_str(&format!("│  💡 {:<12} : {:<47} │\n", ui.bold("판정 사유"), result.decision_reason));
+    out.push_str(&line(&format!("🎯 {} : {}", pad_to(&ui.bold("최종 판정"), 12), pad_to(&ui.decision_styled(result.decision), 45))));
+    out.push_str(&line(&format!(
+        "📊 {} : {}",
+        pad_to(&ui.bold("가치 점수"), 12),
+        pad_to(&format!("{} / 100점  {}", ui.score_styled(total), ui.green(&gauge)), 45)
+    )));
+    out.push_str(&line(&format!("💡 {} : {}", pad_to(&ui.bold("판정 사유"), 12), result.decision_reason)));
     out.push_str(&format!("├{}┤\n", border));
-    out.push_str(&format!("│  🛠️  {:<11} : {:<47} │\n", ui.bold("권장 형태"), ui.yellow(p.form_factor)));
-    out.push_str(&format!("│  📦 {:<12} : {:<47} │\n", ui.bold("권장 스택"), p.recommended_stack));
-    out.push_str(&format!("│  📁 {:<12} : {:<47} │\n", ui.bold("예상 규모"), p.estimated_files));
+    out.push_str(&line(&format!("🛠️  {} : {}", pad_to(&ui.bold("권장 형태"), 11), pad_to(&ui.yellow(p.form_factor), 45))));
+    out.push_str(&line(&format!("📦 {} : {}", pad_to(&ui.bold("권장 스택"), 12), pad_to(p.recommended_stack, 45))));
+    out.push_str(&line(&format!("📁 {} : {}", pad_to(&ui.bold("예상 규모"), 12), pad_to(p.estimated_files, 45))));
     out.push_str(&format!("├{}┤\n", border));
-    out.push_str(&format!("│  🚫 {} : {:<45} │\n", ui.red("금지 기술"), ui.dim(&p.forbidden_bloat.join(", "))));
-    out.push_str(&format!("│  🚀 {} : {:<45} │\n", ui.green("다음 액션"), ui.bold(p.next_action)));
+    out.push_str(&line(&format!("🚫 {} : {}", ui.red("금지 기술"), pad_to(&ui.dim(&p.forbidden_bloat.join(", ")), 43))));
+    out.push_str(&line(&format!("🚀 {} : {}", ui.green("다음 액션"), pad_to(&ui.bold(p.next_action), 43))));
     out.push_str(&format!("╰{}╯\n", border));
 
     // Gate별 미니 카드 표
@@ -429,9 +523,9 @@ pub fn render_terminal_dashboard(result: &ValuationResult, ui: &TermUi) -> Strin
         let g_bar = render_gauge_modern(actual_p, max_p, 12);
         let pct = (actual_p as f64 / max_p as f64 * 100.0).round() as u32;
         out.push_str(&format!(
-            "│ {:<6} │ {:<20} │ {:>4} │ {:>4} │ {} {:>3}%  │\n",
-            ui.bold(g_id),
-            g_name,
+            "│ {} │ {} │ {:>4} │ {:>4} │ {} {:>3}%  │\n",
+            pad_to(&ui.bold(g_id), 6),
+            pad_to(g_name, 20),
             max_p,
             actual_p,
             ui.cyan(&g_bar),
@@ -440,9 +534,9 @@ pub fn render_terminal_dashboard(result: &ValuationResult, ui: &TermUi) -> Strin
     }
     out.push_str("├────────┼──────────────────────┼──────┼──────┼────────────────────────┤\n");
     out.push_str(&format!(
-        "│ {:<6} │ {:<20} │ {:>4} │ {:>4} │ {} {:>3}%  │\n",
-        ui.bold("합  계"),
-        ui.bold("최종 가치 점수"),
+        "│ {} │ {} │ {:>4} │ {:>4} │ {} {:>3}%  │\n",
+        pad_to(&ui.bold("합  계"), 6),
+        pad_to(&ui.bold("최종 가치 점수"), 20),
         100,
         total,
         ui.bright_green(&render_gauge_modern(total, 100, 12)),
@@ -522,6 +616,25 @@ pub fn escape_json(s: &str) -> String {
         }
     }
     out
+}
+
+/// 대소문자 무관 `</script` 패턴을 `<\/script`로 무력화한다.
+/// HTML 파서는 종료 태그를 대소문자 구분 없이 인식하므로 소문자만
+/// 치환해서는 우회된다. ASCII 패턴만 건드려 UTF-8 바이트는 그대로 둔다.
+pub fn break_script_close(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if i + 8 <= b.len() && b[i] == b'<' && b[i + 1] == b'/' && b[i + 2..i + 8].eq_ignore_ascii_case(b"script") {
+            out.extend_from_slice(b"<\\/script");
+            i += 8;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
 /// HTML XSS 및 마크업 깨짐 방지 이스케이프
@@ -616,8 +729,9 @@ pub fn format_html_report(result: &ValuationResult) -> String {
     };
 
     let md_raw = format_markdown_report(result);
-    // script 태그 내 안전 주입을 위해 </script> 이스케이프
-    let md_escaped = escape_json(&md_raw).replace("</script>", "<\\/script>");
+    // 큰따옴표 JS 문자열에 주입하므로 백틱/`${}` 걱정이 없다.
+    // 대소문자 무관 `</script` 패턴까지 무력화한다.
+    let md_escaped = break_script_close(&escape_json(&md_raw));
 
     let mut forbidden_html = String::new();
     for b in &p.forbidden_bloat {
@@ -768,7 +882,7 @@ pub fn format_html_report(result: &ValuationResult) -> String {
       height: 100%;
       border-radius: 999px;
       background: var(--accent);
-      transition: width 0.5f ease;
+      transition: width 0.5s ease;
     }}
     .gate-pts {{ font-size: 0.85rem; text-align: right; color: var(--accent); font-weight: 700; }}
     .presc-grid {{
@@ -921,7 +1035,7 @@ pub fn format_html_report(result: &ValuationResult) -> String {
   </div>
 
   <script>
-    const markdownText = `{md_escaped}`;
+    const markdownText = "{md_escaped}";
     function copyMarkdown() {{
       navigator.clipboard.writeText(markdownText).then(() => {{
         alert("✅ 마크다운 리포트가 클립보드에 복사되었습니다!");
@@ -1003,33 +1117,33 @@ fn estimate_interim_status(current_score: u32) -> &'static str {
     }
 }
 
-fn ask_gate_quick(
-    ui: &TermUi,
+struct QuickGate<'a> {
     step: u32,
-    title: &str,
+    title: &'a str,
     max_pts: u32,
-    opt1: (&str, u32),
-    opt2: (&str, u32),
-    opt3: (&str, u32),
+    opts: [(&'a str, u32); 3],
     running_total: u32,
-) -> u32 {
-    println!("\n╭─────────────────────────────────────────────────────────────╮");
-    println!("│ {} {} {:<23} │", ui.bold(&format!("Step [{}/5]", step)), ui.cyan(title), ui.dim(&format!("(배점: {}점)", max_pts)));
-    println!("╰─────────────────────────────────────────────────────────────╯");
-    println!("  1) {} {}", ui.bold("상(High):"), opt1.0);
-    println!("  2) {} {}", ui.bold("중(Med) :"), opt2.0);
-    println!("  3) {} {}", ui.bold("하(Low) :"), opt3.0);
-    println!("  4) 직접 점수 입력 (0~{})", max_pts);
+}
 
-    let sel = prompt_number("  -> 선택", 1, 4, 1);
+fn ask_gate_quick(ui: &TermUi, q: QuickGate) -> u32 {
+    println!("\n╭─────────────────────────────────────────────────────────────╮");
+    println!("│ {} {} {:<23} │", ui.bold(&format!("Step [{}/5]", q.step)), ui.cyan(q.title), ui.dim(&format!("(배점: {}점)", q.max_pts)));
+    println!("╰─────────────────────────────────────────────────────────────╯");
+    println!("  1) {} {}", ui.bold("상(High):"), q.opts[0].0);
+    println!("  2) {} {}", ui.bold("중(Med) :"), q.opts[1].0);
+    println!("  3) {} {}", ui.bold("하(Low) :"), q.opts[2].0);
+    println!("  4) 직접 점수 입력 (0~{})", q.max_pts);
+
+    // 기본값은 중(Med). Enter 연타로 최고점이 들어가는 낙관 편향을 막는다.
+    let sel = prompt_number("  -> 선택", 1, 4, 2);
     let pts = match sel {
-        1 => opt1.1,
-        2 => opt2.1,
-        3 => opt3.1,
-        _ => prompt_number("  -> 직접 점수 입력", 0, max_pts, opt2.1),
+        1 => q.opts[0].1,
+        2 => q.opts[1].1,
+        3 => q.opts[2].1,
+        _ => prompt_number("  -> 직접 점수 입력", 0, q.max_pts, q.opts[1].1),
     };
 
-    let new_total = running_total + pts;
+    let new_total = q.running_total + pts;
     println!("  {} 누적 {}점 | {}", ui.green("✓ 반영:"), new_total, ui.dim(estimate_interim_status(new_total)));
     pts
 }
@@ -1054,63 +1168,84 @@ fn run_interactive(ui: &TermUi, preset_name: Option<String>) {
     let (g1, alt_name, g2, g3, g4, g5) = if mode_sel == 1 {
         // Quick Wizard Mode with running score feedback
         let mut running = 0;
-        let g1 = ask_gate_quick(
-            ui, 1, "바퀴 재발명 검증", 25,
-            ("기존 대안 없음 (사내 환경/보안/독창적 로직 필수)", 25),
-            ("대안 있으나 너무 무거움 (5% 핵심 기능만 초경량 필요)", 15),
-            ("이미 훌륭한 오픈소스가 있음 (직접 만들기 비추천)", 5),
-            running,
-        );
+        let g1 = ask_gate_quick(ui, QuickGate {
+            step: 1,
+            title: "바퀴 재발명 검증",
+            max_pts: 25,
+            opts: [
+                ("기존 대안 없음 (사내 환경/보안/독창적 로직 필수)", 25),
+                ("대안 있으나 너무 무거움 (5% 핵심 기능만 초경량 필요)", 15),
+                ("이미 훌륭한 오픈소스가 있음 (직접 만들기 비추천)", 5),
+            ],
+            running_total: running,
+        });
         running += g1;
 
-        let alt = if g1 <= 10 {
+        // 판정 임계값(<= 5)과 일치시킨다. 초과 점수에서는 대안을 물어도 버려진다.
+        let alt = if g1 <= 5 {
             let a = prompt_line("     기존에 존재하는 대안 도구 이름 (없으면 엔터): ");
             if a.is_empty() { None } else { Some(a) }
         } else {
             None
         };
 
-        let g2 = ask_gate_quick(
-            ui, 2, "서비스화 실질 ROI", 25,
-            ("반복 빈도 극상, Jarvis/동료 확산 가능, 연 수십 시간 절감", 25),
-            ("월 1~2회 쓰이지만 수작업 대비 확실한 시간/품질 이점", 15),
-            ("1회성 스크립트 수준, 서비스화 효용 희박", 5),
-            running,
-        );
+        let g2 = ask_gate_quick(ui, QuickGate {
+            step: 2,
+            title: "서비스화 실질 ROI",
+            max_pts: 25,
+            opts: [
+                ("반복 빈도 극상, Jarvis/동료 확산 가능, 연 수십 시간 절감", 25),
+                ("월 1~2회 쓰이지만 수작업 대비 확실한 시간/품질 이점", 15),
+                ("1회성 스크립트 수준, 서비스화 효용 희박", 5),
+            ],
+            running_total: running,
+        });
         running += g2;
 
-        let g3 = ask_gate_quick(
-            ui, 3, "문제의 고통과 시급성", 20,
-            ("없으면 업무 마비/오류 빈번 (Must-have)", 20),
-            ("있으면 편리한 수준 (Nice-to-have)", 10),
-            ("단순 호기심/기술적 유희", 4),
-            running,
-        );
+        let g3 = ask_gate_quick(ui, QuickGate {
+            step: 3,
+            title: "문제의 고통과 시급성",
+            max_pts: 20,
+            opts: [
+                ("없으면 업무 마비/오류 빈번 (Must-have)", 20),
+                ("있으면 편리한 수준 (Nice-to-have)", 10),
+                ("단순 호기심/기술적 유희", 4),
+            ],
+            running_total: running,
+        });
         running += g3;
 
-        let g4 = ask_gate_quick(
-            ui, 4, "유지보수 TCO", 15,
-            ("표준 라이브러리 기반, 종속성 제로, 손 갈 일 없음", 15),
-            ("최소한의 의존성, 가벼운 구조", 10),
-            ("외부 패키지/버전 의존 높아 주기적 관리 필요", 3),
-            running,
-        );
+        let g4 = ask_gate_quick(ui, QuickGate {
+            step: 4,
+            title: "유지보수 TCO",
+            max_pts: 15,
+            opts: [
+                ("표준 라이브러리 기반, 종속성 제로, 손 갈 일 없음", 15),
+                ("최소한의 의존성, 가벼운 구조", 10),
+                ("외부 패키지/버전 의존 높아 주기적 관리 필요", 3),
+            ],
+            running_total: running,
+        });
         running += g4;
 
-        let g5 = ask_gate_quick(
-            ui, 5, "전략 및 자산성", 15,
-            ("핵심 업무(SAS, Jarvis, 오피스 자동화) 직접 연계", 15),
-            ("간접 인프라 기여", 10),
-            ("주력 업무 흐름과 무관", 3),
-            running,
-        );
+        let g5 = ask_gate_quick(ui, QuickGate {
+            step: 5,
+            title: "전략 및 자산성",
+            max_pts: 15,
+            opts: [
+                ("핵심 업무(SAS, Jarvis, 오피스 자동화) 직접 연계", 15),
+                ("간접 인프라 기여", 10),
+                ("주력 업무 흐름과 무관", 3),
+            ],
+            running_total: running,
+        });
 
         (g1, alt, g2, g3, g4, g5)
     } else {
         // Detailed Mode
         println!("\n--- 5대 Gate 점수 직접 입력 ---");
         let g1 = prompt_number("[Gate 1] 바퀴 재발명 검증 (0~25)", 0, 25, 20);
-        let alt = if g1 <= 10 {
+        let alt = if g1 <= 5 {
             let a = prompt_line("  -> 대안 도구 이름 (없으면 엔터): ");
             if a.is_empty() { None } else { Some(a) }
         } else {
@@ -1240,9 +1375,17 @@ const DEFAULT_TEMPLATE_MD: &str = r#"# ⚖️ [프로젝트명] worth-it 가치�
   - [ ] 1초 내 실행되는 단위 테스트 1개 작성
 "#;
 
-fn handle_init(target_path: Option<&str>) {
+/// CLI 사용법 오류는 exit code 2로 종료한다 (관례상 사용법 오류 구분).
+fn usage_error(msg: &str) -> ! {
+    eprintln!("오류: {msg}");
+    eprintln!("사용법: worth-it --name <이름> --scores <G1> <G2> <G3> <G4> <G5> [옵션]");
+    eprintln!("자세히: worth-it --help");
+    std::process::exit(2);
+}
+
+fn handle_init(target_path: Option<&str>, force: bool) {
     let path = target_path.unwrap_or("WORTH_IT.md");
-    if Path::new(path).exists() {
+    if Path::new(path).exists() && !force {
         eprintln!("⚠️ 파일이 이미 존재합니다: {}", path);
         let ans = prompt_line("덮어쓰시겠습니까? (y/N): ");
         if ans.to_lowercase() != "y" {
@@ -1265,19 +1408,20 @@ fn print_help(ui: &TermUi) {
     ui.render_banner("worth-it v0.3.1 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
     println!("사용법:");
     println!("  1. 대화형 모드:      worth-it [프로젝트명]");
-    println!("  2. 템플릿 생성:      worth-it --init [파일명.md]");
+    println!("  2. 템플릿 생성:      worth-it --init [파일명.md] [--force]");
     println!("  3. 인자 지정 모드:    worth-it --name <이름> --scores <G1> <G2> <G3> <G4> <G5> [옵션]\n");
     println!("옵션:");
     println!("  --name <이름>        프로젝트 아이디어 이름");
     println!("  --scores G1 G2..     5대 Gate 점수 5개 (예: --scores 22 20 18 14 12)");
-    println!("  --type <유형>        프로젝트 유형 (cli_tool, agent_tool, dashboard, perf, script)");
+    println!("  --type <유형>        프로젝트 유형 (cli_tool, agent_tool, dashboard, high_perf_cli, script)");
     println!("  --perf               초고속 성능 필수 여부 지정");
     println!("  --alt <대안이름>     기존에 존재하는 대안 오픈소스/도구명");
-    println!("  --json               결과를 JSON 포맷으로 출력 (Jarvis/자동화 연동)");
+    println!("  --json               결과를 JSON 포맷으로 출력 (Jarvis/자동화 연동, -o와 함께 쓰면 JSON 저장)");
     println!("  --html <파일.html>   결과를 독립형 다크 테마 HTML 대시보드로 저장");
     println!("  --no-color           터미널 ANSI 색상 비활성화");
-    println!("  -o, --output <파일>  리포트를 Markdown 파일로 저장");
+    println!("  -o, --output <파일>  리포트를 Markdown 파일로 저장 (--json과 함께 쓰면 JSON 저장)");
     println!("  --init [파일]        현재 폴더에 빈 WORTH_IT.md 기획 검증서 생성");
+    println!("  --force, -f          --init 시 기존 파일 확인 없이 덮어쓰기 (CI용)");
     println!("  -h, --help           도움말 출력");
 }
 
@@ -1294,8 +1438,20 @@ fn main() {
     }
 
     if args[1] == "--init" {
-        let target = if args.len() > 2 { Some(args[2].as_str()) } else { None };
-        handle_init(target);
+        let mut target: Option<&str> = None;
+        let mut force = false;
+        for a in &args[2..] {
+            if a == "--force" || a == "-f" {
+                force = true;
+            } else if a.starts_with('-') {
+                usage_error(&format!("--init에서 알 수 없는 옵션 '{a}'입니다."));
+            } else if target.is_none() {
+                target = Some(a.as_str());
+            } else {
+                usage_error("--init에는 파일명을 하나만 전달할 수 있습니다.");
+            }
+        }
+        handle_init(target, force);
         return;
     }
 
@@ -1322,54 +1478,79 @@ fn main() {
                 return;
             }
             "--name" => {
-                if i + 1 < args.len() {
-                    name = args[i + 1].clone();
-                    i += 1;
+                if i + 1 >= args.len() || args[i + 1].starts_with('-') {
+                    usage_error("--name 뒤에 프로젝트 이름을 전달해야 합니다.");
                 }
+                name = args[i + 1].clone();
+                i += 1;
             }
             "--scores" => {
-                while i + 1 < args.len() && !args[i + 1].starts_with('-') && scores_vec.len() < 5 {
-                    if let Ok(v) = args[i + 1].parse::<u32>() {
-                        scores_vec.push(v);
-                        i += 1;
-                    } else {
+                while i + 1 < args.len() && scores_vec.len() < 5 {
+                    if args[i + 1].starts_with('-') {
                         break;
+                    }
+                    match args[i + 1].parse::<u32>() {
+                        Ok(v) => {
+                            scores_vec.push(v);
+                            i += 1;
+                        }
+                        Err(_) => usage_error(&format!(
+                            "--scores 값 '{}'이 0 이상의 정수가 아닙니다.",
+                            args[i + 1]
+                        )),
                     }
                 }
             }
             "--type" => {
-                if i + 1 < args.len() {
-                    ptype = ProjectType::parse(&args[i + 1]);
-                    i += 1;
+                if i + 1 >= args.len() || args[i + 1].starts_with('-') {
+                    usage_error("--type 뒤에 유형을 전달해야 합니다. (cli_tool, agent_tool, dashboard, high_perf_cli, script)");
                 }
+                match ProjectType::parse(&args[i + 1]) {
+                    Some(t) => ptype = t,
+                    None => usage_error(&format!(
+                        "알 수 없는 프로젝트 유형 '{}'입니다. (cli_tool, agent_tool, dashboard, high_perf_cli, script)",
+                        args[i + 1]
+                    )),
+                }
+                i += 1;
             }
             "--perf" => {
                 perf = true;
             }
             "--alt" => {
-                if i + 1 < args.len() {
-                    alt = Some(args[i + 1].clone());
-                    i += 1;
+                if i + 1 >= args.len() || args[i + 1].starts_with('-') {
+                    usage_error("--alt 뒤에 대안 도구 이름을 전달해야 합니다.");
                 }
+                alt = Some(args[i + 1].clone());
+                i += 1;
             }
             "--json" => {
                 as_json = true;
             }
+            "--no-color" => {
+                // main 진입 시 이미 반영됨. 여기서는 통과만 시킨다.
+            }
             "--html" => {
-                if i + 1 < args.len() {
-                    html_output = Some(args[i + 1].clone());
-                    i += 1;
+                if i + 1 >= args.len() || args[i + 1].starts_with('-') {
+                    usage_error("--html 뒤에 저장할 파일 경로를 전달해야 합니다.");
                 }
+                html_output = Some(args[i + 1].clone());
+                i += 1;
             }
             "-o" | "--output" => {
-                if i + 1 < args.len() {
-                    output = Some(args[i + 1].clone());
-                    i += 1;
+                if i + 1 >= args.len() || args[i + 1].starts_with('-') {
+                    usage_error("-o/--output 뒤에 저장할 파일 경로를 전달해야 합니다.");
                 }
+                output = Some(args[i + 1].clone());
+                i += 1;
             }
-            _ => {
-                // 알 수 없는 플래그 무시 or 단일 위치인자 name 처리
-                if !args[i].starts_with('-') && name == "unnamed-project" && scores_vec.is_empty() {
+            other => {
+                // `-`로 시작하는데 위에서 처리되지 않았으면 오타이다.
+                if other.starts_with('-') {
+                    usage_error(&format!("알 수 없는 옵션 '{other}'입니다. --help로 확인하세요."));
+                }
+                // 단일 위치인자는 프로젝트 이름으로 받는다.
+                if name == "unnamed-project" && scores_vec.is_empty() {
                     name = args[i].clone();
                 }
             }
@@ -1378,10 +1559,7 @@ fn main() {
     }
 
     if scores_vec.len() < 5 {
-        eprintln!("오류: --scores 옵션 뒤에 5개 점수(G1 G2 G3 G4 G5)를 모두 전달해야 합니다.");
-        eprintln!("각 Gate 최대 배점: G1(25) G2(25) G3(20) G4(15) G5(15)");
-        eprintln!("예시: worth-it --name \"my-tool\" --scores 22 20 18 14 12");
-        std::process::exit(1);
+        usage_error("scores 옵션 뒤에 5개 점수(G1 G2 G3 G4 G5)를 모두 전달해야 합니다. (음수는 불가, 최대 배점: G1 25 / G2 25 / G3 20 / G4 15 / G5 15)");
     }
 
     // 각 Gate 점수를 최대 배점으로 안전하게 클램핑
@@ -1545,5 +1723,64 @@ mod tests {
         let html = format_html_report(&res);
         assert!(html.contains("&lt;script&gt;evil()&lt;/script&gt;"));
         assert!(!html.contains("<script>evil()</script>"));
+    }
+
+    #[test]
+    fn test_evaluate_adopt_without_alternative_name() {
+        // Gate 1이 바닥이면 대안 이름이 없어도 ADOPT이다 (총점제 GO 우회 차단).
+        let scores = GateScores::new_clamped(5, 25, 20, 15, 15);
+        let res = evaluate("maybe-tool", scores, ProjectType::CliTool, false, None);
+        assert_eq!(res.decision, Decision::Adopt);
+    }
+
+    #[test]
+    fn test_evaluate_go_capped_by_weak_gate() {
+        // 총점 84점이어도 Gate 3이 하한선(8) 미만이면 SPIKE로 격하된다.
+        let scores = GateScores::new_clamped(25, 25, 4, 15, 15);
+        assert_eq!(scores.total(), 84);
+        let res = evaluate("strong-but-not-urgent", scores, ProjectType::CliTool, false, None);
+        assert_eq!(res.decision, Decision::Spike);
+    }
+
+    #[test]
+    fn test_project_type_parse_strict() {
+        assert_eq!(ProjectType::parse("agent_tool"), Some(ProjectType::AgentTool));
+        assert_eq!(ProjectType::parse("cli_tool"), Some(ProjectType::CliTool));
+        assert_eq!(ProjectType::parse("banana"), None);
+    }
+
+    #[test]
+    fn test_html_copy_string_is_double_quoted() {
+        // 마크다운의 백틱이 JS 템플릿 리터럴을 깨뜨리므로 큰따옴표 문자열을 쓴다.
+        let scores = GateScores::new_clamped(22, 20, 18, 14, 12);
+        let res = evaluate("a`b${c}", scores, ProjectType::CliTool, false, None);
+        let html = format_html_report(&res);
+        assert!(html.contains("const markdownText = \""));
+        assert!(!html.contains("const markdownText = `"));
+    }
+
+    #[test]
+    fn test_css_transition_unit_valid() {
+        let scores = GateScores::new_clamped(22, 20, 18, 14, 12);
+        let res = evaluate("css-tool", scores, ProjectType::CliTool, false, None);
+        let html = format_html_report(&res);
+        assert!(html.contains("0.5s ease"));
+        assert!(!html.contains("0.5f ease"));
+    }
+
+    #[test]
+    fn test_break_script_close_case_insensitive() {
+        assert_eq!(break_script_close("a</ScRiPt>b"), "a<\\/script>b");
+        assert_eq!(break_script_close("한글</SCRIPT>테스트"), "한글<\\/script>테스트");
+        assert_eq!(break_script_close("깨끗한 문자열"), "깨끗한 문자열");
+    }
+
+    #[test]
+    fn test_visible_width_and_pad() {
+        assert_eq!(visible_width("\x1b[32m가\x1b[0m"), 2);
+        assert_eq!(visible_width("ab"), 2);
+        assert_eq!(pad_to("ab", 5), "ab   ");
+        assert_eq!(pad_to("가나", 4), "가나");
+        assert_eq!(pad_to("가나", 3), "가나");
     }
 }

@@ -8,8 +8,8 @@
   <a href="https://github.com/Hannoah/worth-it/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License MIT"></a>
   <img src="https://img.shields.io/badge/rust-2021%20edition-orange.svg" alt="Rust 2021">
   <img src="https://img.shields.io/badge/dependencies-0%20(std%20only)-brightgreen.svg" alt="Zero Dependencies">
-  <img src="https://img.shields.io/badge/binary%20size-325%20KB-success.svg" alt="Binary Size">
-  <img src="https://img.shields.io/badge/tests-10%20passed-green.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/binary%20size-334%20KB-success.svg" alt="Binary Size">
+  <img src="https://img.shields.io/badge/tests-19%20passed-green.svg" alt="Tests">
 </p>
 
 ---
@@ -25,11 +25,11 @@
 ## 🏛️ 6대 핵심 설계 철학 (Lean Principles)
 
 1. **군더더기 없음 (No Bloat):** 외부 크레이트 0개 (Zero External Dependencies), 오직 Rust 표준 라이브러리(`std`)만 사용
-2. **최적화 (Optimized):** LTO, Strip, `opt-level = "z"` 적용 → **325 KB 초경량 단일 실행 파일(`.exe`)**
+2. **최적화 (Optimized):** LTO, Strip, `opt-level = "z"` 적용 → **334 KB 초경량 단일 실행 파일(`.exe`)**
 3. **간결함 (Concise / KISS):** 단일 모듈 소스 코드로 핵심 로직 및 인터랙티브 UI 완결
 4. **목적 적합성 (Fit for Purpose):** 요구사항에 최적화된 최소 폼팩터(CLI / 에이전트 도구 / 정적 HTML) 처방
 5. **불필요한 기능 구현 금지 (YAGNI):** 지금 당장 쓰지 않는 기능과 미래 확장성 차단
-6. **가볍고 확실하게 (Lightweight & Solid):** 메모리/타입 세이프티, 0.00초 10개 단위 테스트 완비
+6. **가볍고 확실하게 (Lightweight & Solid):** 메모리/타입 세이프티, 0.00초 19개 단위 테스트 완비
 
 ---
 
@@ -47,7 +47,7 @@ cd worth-it
 # 2. 릴리즈 빌드 (단 4~7초 소요, 외부 의존성 다운로드 0초)
 cargo build --release
 
-# 생성된 325 KB 단일 바이너리 확인:
+# 생성된 334 KB 단일 바이너리 확인:
 # ./target/release/worth-it.exe (Windows) 또는 ./target/release/worth-it (Linux/macOS)
 ```
 
@@ -169,7 +169,7 @@ Claude Code, Antigravity, Jarvis 등에게 다음과 같이 요청하면 [SKILL.
 ```powershell
 cargo test
 ```
-외부 크레이트 없이 10개 단위 테스트가 **0.00초** 만에 통과합니다.
+외부 크레이트 없이 19개 단위 테스트가 **0.00초** 만에 통과합니다.
 
 ---
 
