@@ -1,0 +1,17 @@
+[package]
+name = "worth-it"
+version = "0.1.0"
+edition = "2021"
+authors = ["kornah"]
+description = "Lean project valuation & architecture prescription engine"
+
+[dependencies]
+# 외부 크레이트 0개 (Zero External Dependencies)
+# 오직 Rust 표준 라이브러리(std)만 사용하여 다운로드 오버헤드 0, 빌드 초고속 달성
+
+[profile.release]
+opt-level = "z"        # 바이너리 크기 및 최적화 극대화
+lto = true             # 링크 타임 최적화로 불필요 코드 제거
+codegen-units = 1      # 단일 코드 생성 단위로 인라인 최적화 강화
+panic = "abort"        # 언와인딩 테이블 제거로 바이너리 다이어트
+strip = true           # 디버그 심볼 제거 (초경량 exe)
