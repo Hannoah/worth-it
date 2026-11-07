@@ -1,6 +1,6 @@
 [package]
 name = "worth-it"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 authors = ["Hannoah"]
 description = "Lean project valuation & architecture prescription engine"

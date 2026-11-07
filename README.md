@@ -40,7 +40,7 @@
 빌드 없이 바로 씁니다. [Releases](https://github.com/Hannoah/worth-it/releases) 페이지에서 `worth-it.exe`를 받아 실행하세요.
 
 ```powershell
-# 예: v0.3.1 다운로드 후 실행
+# 예: v0.4.0 다운로드 후 실행
 .\worth-it.exe
 ```
 

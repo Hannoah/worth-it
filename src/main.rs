@@ -1,4 +1,4 @@
-//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.3.1 Robust & Hardened Edition)
+//! worth-it: 프로젝트 가치평가 및 초경량 아키텍처 처방 엔진 (v0.4.0 Robust & Hardened Edition)
 //!
 //! 6대 핵심 철학:
 //! 1. 군더더기 없음 (No Bloat) - 외부 의존 크레이트 0개 (Zero External Dependencies)
@@ -1149,7 +1149,7 @@ fn ask_gate_quick(ui: &TermUi, q: QuickGate) -> u32 {
 }
 
 fn run_interactive(ui: &TermUi, preset_name: Option<String>) {
-    ui.render_banner("⚖️ worth-it v0.3.1 · 프로젝트 가치평가 및 아키텍처 처방기");
+    ui.render_banner("⚖️ worth-it v0.4.0 · 프로젝트 가치평가 및 아키텍처 처방기");
     println!("{}\n", ui.dim("철학: 군더더기 없음 · 최적화 · 간결함 · 목적 적합성 · YAGNI · 가볍고 확실하게"));
 
     let name = if let Some(n) = preset_name {
@@ -1328,52 +1328,8 @@ fn run_interactive(ui: &TermUi, preset_name: Option<String>) {
 // 5. TEMPLATE GENERATOR (--init)
 // ============================================================================
 
-const DEFAULT_TEMPLATE_MD: &str = r#"# ⚖️ [프로젝트명] worth-it 가치평가 및 기획 검증서
-
-> **작성일:** YYYY-MM-DD  
-> **기획자:** kornah  
-> **핵심 철학:** 군더더기 없음 · 최적화 · 간결함 · 목적 적합성 · YAGNI · 가볍고 확실하게
-
----
-
-## 1. 🛑 착수 전 3대 킬러 룰 점검
-
-- [ ] **대안 3개 조사:** 기존 오픈소스/도구 3개를 검토했는가? (대안 도구명: _____________)
-- [ ] **3의 규칙:** 이 작업을 실제로 3번 이상 반복하며 비효율을 겪었는가?
-- [ ] **수작업 10배 룰:** 수작업 대비 개발/유지보수 시간이 과도하게 크지 않은가?
-
----
-
-## 2. 📊 5대 Gate 점수표 (총점: _____ / 100점)
-
-| Gate | 평가 항목 | 배점 | 득점 | 근거 및 메모 |
-|:---:|---|:---:|:---:|---|
-| **Gate 1** | **바퀴 재발명 검증** | 25 | | 기존 대안 대비 차별점 / 사내 특화 필수 이유: |
-| **Gate 2** | **서비스화 실질 ROI** | 25 | | 반복 사용 주기 / 예상 시간 절감 규모: |
-| **Gate 3** | **문제의 고통/시급성** | 20 | | Must-have vs Nice-to-have 판단: |
-| **Gate 4** | **유지보수 TCO** | 15 | | 의존성 규모 / 향후 관리 부담: |
-| **Gate 5** | **전략 및 자산성** | 15 | | 주력 비즈니스(SAS, Jarvis, 자동화) 연계점: |
-
-### 🚦 최종 판정 (택 1)
-- [ ] **🟢 GO (80점 이상):** 정식 개발 및 서비스화 추진
-- [ ] **🟡 SPIKE (60~79점):** 1일 타임박스 최소 프로토타입(PoC)만 작성
-- [ ] **🔵 ADOPT (대안 우수):** 직접 개발 중단, 기성 도구/패키지 도입
-- [ ] **🔴 NO-GO (60점 미만):** 착수 기각, 1회성 명령어로 대체
-
----
-
-## 3. 🛠️ 목적 적합 초경량 아키텍처 처방
-
-- **구현 형태:** (예: 단일 파일 Python CLI / Jarvis MCP 도구 / 단일 HTML / Rust 바이너리)
-- **권장 기술 스택:** (표준 라이브러리 위주 작성)
-- **🚫 절대 쓰지 말 것 (금지 기술):**
-  - ❌ 
-  - ❌ 
-- **🎯 린(Lean) 구현 수칙:**
-  - [ ] 파일 1~2개 이내로 끝내기
-  - [ ] 외부 라이브러리 설치 최소화
-  - [ ] 1초 내 실행되는 단위 테스트 1개 작성
-"#;
+// template.md와 단일 출처로 유지한다 (복사본 드리프트 방지).
+const DEFAULT_TEMPLATE_MD: &str = include_str!("../template.md");
 
 /// CLI 사용법 오류는 exit code 2로 종료한다 (관례상 사용법 오류 구분).
 fn usage_error(msg: &str) -> ! {
@@ -1405,7 +1361,7 @@ fn handle_init(target_path: Option<&str>, force: bool) {
 // ============================================================================
 
 fn print_help(ui: &TermUi) {
-    ui.render_banner("worth-it v0.3.1 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
+    ui.render_banner("worth-it v0.4.0 · 초경량 프로젝트 가치평가 및 아키텍처 처방기");
     println!("사용법:");
     println!("  1. 대화형 모드:      worth-it [프로젝트명]");
     println!("  2. 템플릿 생성:      worth-it --init [파일명.md] [--force]");
